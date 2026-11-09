@@ -47,11 +47,24 @@ jobs:
           file dist/KillSwitch.dylib
           python3 - <<'PY'
           import struct
-          d = open("dist/KillSwitch.dylib","rb").read(32)
-          magic, cpu, sub, ftype = struct.unpack("<IIII", d[:16])
-          print("magic=%08x cputype=%08x filetype=%d" % (magic, cpu, ftype))
-          assert magic == 0xFEEDFACF, "not 64-bit mach-o"
-          assert ftype == 6, "not MH_DYLIB (filetype=%d)" % ftype
+          data = open("dist/KillSwitch.dylib","rb").read()
+          magic_be = struct.unpack(">I", data[:4])[0]
+          if magic_be == 0xCAFEBABE:
+              n = struct.unpack(">I", data[4:8])[0]
+              print("fat binary, %d slices" % n)
+              ok = False
+              for i in range(n):
+                  off = 8 + i * 20
+                  cpu, sub, offset, size, align = struct.unpack(">iiIII", data[off:off+20])
+                  m, ft = struct.unpack("<II", data[offset:offset+8])
+                  print("  slice %d: cpu=%08x offset=%d size=%d magic=%08x filetype=%d" % (i, cpu, offset, size, m, ft))
+                  if m == 0xFEEDFACF and ft == 6:
+                      ok = True
+              assert ok, "no valid MH_DYLIB slice"
+          else:
+              m, cpu, sub, ft = struct.unpack("<IIII", data[:16])
+              print("thin: magic=%08x filetype=%d" % (m, ft))
+              assert m == 0xFEEDFACF and ft == 6, "not MH_DYLIB"
           print("macho check ok")
           PY
 
