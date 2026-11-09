@@ -1,6 +1,6 @@
 name: build
 
-# ??:?? Actions -> build -> Run workflow;push ?????
+# 触发：网页 Actions -> build -> Run workflow；push 也会自动跑
 on:
   workflow_dispatch:
   push:
@@ -8,13 +8,13 @@ on:
 
 jobs:
   build:
-    # macOS 13 ? runner ????,??? macos-latest
+    # macOS 13 的 runner 已经停用，必须用 macos-latest
     runs-on: macos-latest
     steps:
-      - name: ????
+      - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: ?? Theos ? iOS SDK
+      - name: 安装 Theos 和 iOS SDK
         run: |
           set -e
           brew install ldid xz dpkg || true
@@ -28,7 +28,7 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: ?? KillSwitch.dylib
+      - name: 编译 KillSwitch.dylib
         run: |
           set -e
           cd KillSwitch
@@ -36,13 +36,13 @@ jobs:
           make -j4
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
-      - name: ????
+      - name: 收集产物
         run: |
           mkdir -p dist
           find KillSwitch/.theos/obj -name "KillSwitch.dylib" -exec cp {} dist/ \;
           ls -l dist
 
-      - name: ????
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: KillSwitch-dylib
