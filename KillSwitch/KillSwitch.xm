@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/sysctl.h>
 
 // ============================== 用户配置区 ==============================
@@ -393,25 +394,56 @@ NSString *KSStatusText(void) { return gKSOn ? KS_TEXT_ON : KS_TEXT_OFF; }
 
 // ============================================================================
 //  设置页 UI：在插件设置页顶部插一行「远程开关」
-//  宿主插件里的类名：FNSettingsViewController（蜂鸟众包插件 / 验证3.dylib）
-//  若换别的插件，把下面三个 %hook 里的类名换掉即可
+//  宿主插件类名：FNSettingsViewController（验证3.dylib / 蜂鸟众包插件）
+//
+//  这里不用 substrate / Logos，纯 ObjC runtime swizzling：
+//    - 免越狱（全能签/轻松签）注入也能跑，不依赖 libsubstrate
+//    - 宿主类可能比本 dylib 晚注册，所以下面有“轮询重试”安装
 // ============================================================================
-
-@interface FNSettingsViewController : UIViewController
-@end
 
 static const NSInteger KSSection = 0;   // 插在第 0 组
 static const NSInteger KSRow     = 0;   // 第 0 行
 
-%hook FNSettingsViewController
+static IMP gOrigRowCount        = NULL;
+static IMP gOrigCellForRow      = NULL;
+static IMP gOrigDidSelect       = NULL;
 
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    NSInteger n = %orig;
-    if (section == KSSection) n += 1;
-    return n;
+static IMP gOrigViewDidLoad     = NULL;
+static IMP gOrigDidUpdateLocs   = NULL;
+static IMP gOrigRouteTick       = NULL;
+static IMP gOrigJumpToCoord     = NULL;
+static IMP gOrigStartRoute      = NULL;
+static IMP gOrigToggleIgnore    = NULL;
+
+static BOOL KSHasOwnMethod(Class cls, SEL sel) {
+    if (!cls) return NO;
+    unsigned int n = 0;
+    Method *list = class_copyMethodList(cls, &n);
+    BOOL found = NO;
+    for (unsigned int i = 0; i < n; i++) {
+        if (method_getName(list[i]) == sel) { found = YES; break; }
+    }
+    if (list) free(list);
+    return found;
 }
 
-- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+static BOOL KSSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
+    if (!cls || !KSHasOwnMethod(cls, sel)) return NO;
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return NO;
+    *oldImp = method_setImplementation(m, newImp);
+    return YES;
+}
+
+#pragma mark - FNSettingsViewController 替换实现
+
+static NSInteger KS_rowCount(id self, SEL _cmd, UITableView *tv, NSInteger section) {
+    NSInteger n = 0;
+    if (gOrigRowCount) n = ((NSInteger (*)(id, SEL, UITableView *, NSInteger))gOrigRowCount)(self, _cmd, tv, section);
+    return (section == KSSection) ? (n + 1) : n;
+}
+
+static UITableViewCell *KS_cellForRow(id self, SEL _cmd, UITableView *tv, NSIndexPath *ip) {
     if (ip.section == KSSection && ip.row == KSRow) {
         static NSString *cid = @"KSRemoteSwitchCell";
         UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:cid];
@@ -419,9 +451,8 @@ static const NSInteger KSRow     = 0;   // 第 0 行
             cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:cid];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
 
-            // 左侧标题 + 右侧开关 + 中间状态文字 [开关]开[开关]
             UILabel *state = [[UILabel alloc] init];
-            state.tag = 0x4B53;                     // 'KS'
+            state.tag = 0x4B53;
             state.font = [UIFont boldSystemFontOfSize:16];
             state.textAlignment = NSTextAlignmentRight;
             state.translatesAutoresizingMaskIntoConstraints = NO;
@@ -430,7 +461,7 @@ static const NSInteger KSRow     = 0;   // 第 0 行
             UISwitch *sw = [[UISwitch alloc] init];
             sw.tag = 0x4B54;
             sw.translatesAutoresizingMaskIntoConstraints = NO;
-            [sw addTarget:self action:@selector(ks_switchTapped:) forControlEvents:UIControlEventValueChanged];
+            sw.enabled = NO;                     // 只显示，不接受本地修改
             [cell.contentView addSubview:sw];
 
             [NSLayoutConstraint activateConstraints:@[
@@ -442,94 +473,122 @@ static const NSInteger KSRow     = 0;   // 第 0 行
         }
         cell.textLabel.text = @"远程开关";
 
-        UILabel *state = [cell.contentView viewWithTag:0x4B53];
-        UISwitch *sw    = [cell.contentView viewWithTag:0x4B54];
+        UILabel *state = (UILabel *)[cell.contentView viewWithTag:0x4B53];
+        UISwitch *sw    = (UISwitch *)[cell.contentView viewWithTag:0x4B54];
         state.text      = KSStatusText();
         state.textColor = gKSOn ? [UIColor systemGreenColor] : [UIColor systemRedColor];
         sw.on           = gKSOn;
-        sw.enabled      = NO;   // 状态由服务端决定，不让本地改
         return cell;
     }
 
+    if (!gOrigCellForRow) return nil;
     NSIndexPath *fixed = ip;
-    if (ip.section == KSSection) fixed = [NSIndexPath indexPathForRow:ip.row - 1 inSection:ip.section];
-    return %orig(tv, fixed);
+    if (ip.section == KSSection && ip.row > KSRow) {
+        fixed = [NSIndexPath indexPathForRow:(ip.row - 1) inSection:ip.section];
+    }
+    return ((UITableViewCell *(*)(id, SEL, UITableView *, NSIndexPath *))gOrigCellForRow)(self, _cmd, tv, fixed);
 }
 
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+static void KS_didSelect(id self, SEL _cmd, UITableView *tv, NSIndexPath *ip) {
     if (ip.section == KSSection && ip.row == KSRow) {
-        KSRefresh(YES);
+        KSRefresh(YES);                       // 点一下立即拉一次
         [tv deselectRowAtIndexPath:ip animated:YES];
         return;
     }
+    if (!gOrigDidSelect) return;
     NSIndexPath *fixed = ip;
-    if (ip.section == KSSection) fixed = [NSIndexPath indexPathForRow:ip.row - 1 inSection:ip.section];
-    %orig(tv, fixed);
+    if (ip.section == KSSection && ip.row > KSRow) {
+        fixed = [NSIndexPath indexPathForRow:(ip.row - 1) inSection:ip.section];
+    }
+    ((void (*)(id, SEL, UITableView *, NSIndexPath *))gOrigDidSelect)(self, _cmd, tv, fixed);
 }
 
-// 点开关不做本地切换，只提示状态由远程控制
-%new
-- (void)ks_switchTapped:(UISwitch *)sw {
-    sw.on = gKSOn;
-    KSRefresh(YES);
+#pragma mark - A5 功能闸门（关的时候先停功能，再强杀）
+
+static void KS_viewDidLoad(id self, SEL _cmd) {
+    if (!gKSOn) return;
+    if (gOrigViewDidLoad) ((void (*)(id, SEL))gOrigViewDidLoad)(self, _cmd);
 }
 
-%end
+static void KS_didUpdateLocations(id self, SEL _cmd, id mgr, id locs) {
+    if (!gKSOn) return;
+    if (gOrigDidUpdateLocs) ((void (*)(id, SEL, id, id))gOrigDidUpdateLocs)(self, _cmd, mgr, locs);
+}
 
-// ============================================================================
-//  功能闸门：开关为「关」时，宿主插件主控制器 A5 的干活方法直接返回
-//  （验证3.dylib 里 A5 是地图/定位主控制器，172 个方法都在这上面）
-//  这只是「先掐功能」，真正的强制退出在 KSEnforceOff 里
-// ============================================================================
+static void KS_routeTimerTick(id self, SEL _cmd) {
+    if (!gKSOn) return;
+    if (gOrigRouteTick) ((void (*)(id, SEL))gOrigRouteTick)(self, _cmd);
+}
+
+static void KS_jumpToRealCoordinate(id self, SEL _cmd, id coord) {
+    if (!gKSOn) return;
+    if (gOrigJumpToCoord) ((void (*)(id, SEL, id))gOrigJumpToCoord)(self, _cmd, coord);
+}
+
+static void KS_startRouteSimulation(id self, SEL _cmd) {
+    if (!gKSOn) return;
+    if (gOrigStartRoute) ((void (*)(id, SEL))gOrigStartRoute)(self, _cmd);
+}
+
+static void KS_toggleIgnoreDistance(id self, SEL _cmd) {
+    if (!gKSOn) return;
+    if (gOrigToggleIgnore) ((void (*)(id, SEL))gOrigToggleIgnore)(self, _cmd);
+}
+
+#pragma mark - 安装（带重试）
+
+static void KSInstallOnce(void) {
+    Class vc = objc_getClass("FNSettingsViewController");
+    if (vc && !gOrigRowCount) {
+        KSSwizzle(vc, @selector(tableView:numberOfRowsInSection:), (IMP)KS_rowCount, &gOrigRowCount);
+        KSSwizzle(vc, @selector(tableView:cellForRowAtIndexPath:), (IMP)KS_cellForRow, &gOrigCellForRow);
+        KSSwizzle(vc, @selector(tableView:didSelectRowAtIndexPath:), (IMP)KS_didSelect, &gOrigDidSelect);
+        NSLog(@"[KillSwitch] 设置页挂载: rows=%@ cell=%@ select=%@",
+              gOrigRowCount ? @"ok" : @"miss", gOrigCellForRow ? @"ok" : @"miss", gOrigDidSelect ? @"ok" : @"miss");
+    }
 
 #if KS_GATE_FEATURES
-
-@interface A5 : UIViewController
-@end
-
-%hook A5
-
-- (void)viewDidLoad {
-    if (!gKSOn) return;
-    %orig;
-}
-
-- (void)locationManager:(id)mgr didUpdateLocations:(id)locs {
-    if (!gKSOn) return;
-    %orig;
-}
-
-- (void)routeTimerTick {
-    if (!gKSOn) return;
-    %orig;
-}
-
-- (void)jumpToRealCoordinate:(id)coord {
-    if (!gKSOn) return;
-    %orig;
-}
-
-- (void)startRouteSimulation {
-    if (!gKSOn) return;
-    %orig;
-}
-
-- (void)toggleIgnoreDistance {
-    if (!gKSOn) return;
-    %orig;
-}
-
-%end
-
+    Class a5 = objc_getClass("A5");
+    if (a5 && !gOrigViewDidLoad) {
+        KSSwizzle(a5, @selector(viewDidLoad), (IMP)KS_viewDidLoad, &gOrigViewDidLoad);
+        KSSwizzle(a5, @selector(locationManager:didUpdateLocations:), (IMP)KS_didUpdateLocations, &gOrigDidUpdateLocs);
+        KSSwizzle(a5, @selector(routeTimerTick), (IMP)KS_routeTimerTick, &gOrigRouteTick);
+        KSSwizzle(a5, @selector(jumpToRealCoordinate:), (IMP)KS_jumpToRealCoordinate, &gOrigJumpToCoord);
+        KSSwizzle(a5, @selector(startRouteSimulation), (IMP)KS_startRouteSimulation, &gOrigStartRoute);
+        KSSwizzle(a5, @selector(toggleIgnoreDistance), (IMP)KS_toggleIgnoreDistance, &gOrigToggleIgnore);
+        NSLog(@"[KillSwitch] 功能闸门挂载: viewDidLoad=%@", gOrigViewDidLoad ? @"ok" : @"miss");
+    }
 #endif
+}
+
+static void KSInstallWithRetry(NSInteger left) {
+    KSInstallOnce();
+    BOOL instPage = (gOrigRowCount != NULL);
+#if KS_GATE_FEATURES
+    BOOL instGate = (gOrigViewDidLoad != NULL);
+#else
+    BOOL instGate = YES;
+#endif
+    if (instPage && instGate) return;
+    if (left <= 0) {
+        NSLog(@"[KillSwitch] 挂载超时 page=%d gate=%d", instPage, instGate);
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        KSInstallWithRetry(left - 1);
+    });
+}
 
 // ============================================================================
 //  启动
 // ============================================================================
 
-%ctor {
+__attribute__((constructor))
+static void KillSwitchInit(void) {
     @autoreleasepool {
         KSStart();
+        KSInstallWithRetry(120);   // 最多试 60 秒，等宿主类注册完
         NSLog(@"[KillSwitch] 已加载，当前状态：%@", KSStatusText());
     }
 }

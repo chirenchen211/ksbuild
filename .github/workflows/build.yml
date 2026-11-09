@@ -1,6 +1,5 @@
 name: build
 
-# 触发：push / 网页手动 Run workflow
 on:
   workflow_dispatch:
   push:
@@ -10,10 +9,10 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: 拉取代码
+      - name: checkout
         uses: actions/checkout@v4
 
-      - name: 安装 Theos 和 iOS SDK
+      - name: setup theos
         run: |
           set -e
           brew install ldid xz dpkg || true
@@ -27,16 +26,15 @@ jobs:
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: 编译 KillSwitch.dylib
+      - name: build
         run: |
           set -e
           cd KillSwitch
           make clean || true
           make -j4 DEBUG=0 FINALPACKAGE=1
-          echo "--- all built dylibs ---"
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
-      - name: 收集产物（排除 dSYM）
+      - name: collect
         run: |
           set -e
           mkdir -p dist
@@ -45,30 +43,10 @@ jobs:
           cp "$f" dist/KillSwitch.dylib
           ls -l dist
           file dist/KillSwitch.dylib
-          python3 - <<'PY'
-          import struct
-          data = open("dist/KillSwitch.dylib","rb").read()
-          magic_be = struct.unpack(">I", data[:4])[0]
-          if magic_be == 0xCAFEBABE:
-              n = struct.unpack(">I", data[4:8])[0]
-              print("fat binary, %d slices" % n)
-              ok = False
-              for i in range(n):
-                  off = 8 + i * 20
-                  cpu, sub, offset, size, align = struct.unpack(">iiIII", data[off:off+20])
-                  m, ft = struct.unpack("<II", data[offset:offset+8])
-                  print("  slice %d: cpu=%08x offset=%d size=%d magic=%08x filetype=%d" % (i, cpu, offset, size, m, ft))
-                  if m == 0xFEEDFACF and ft == 6:
-                      ok = True
-              assert ok, "no valid MH_DYLIB slice"
-          else:
-              m, cpu, sub, ft = struct.unpack("<IIII", data[:16])
-              print("thin: magic=%08x filetype=%d" % (m, ft))
-              assert m == 0xFEEDFACF and ft == 6, "not MH_DYLIB"
-          print("macho check ok")
-          PY
+          file dist/KillSwitch.dylib | grep -q "dynamically linked shared library"
+          file dist/KillSwitch.dylib | grep -q "arm64"
 
-      - name: 上传产物
+      - name: upload
         uses: actions/upload-artifact@v4
         with:
           name: KillSwitch-dylib

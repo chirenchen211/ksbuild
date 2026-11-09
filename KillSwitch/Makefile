@@ -8,7 +8,6 @@ TWEAK_NAME = KillSwitch
 KillSwitch_FILES = KillSwitch.xm
 KillSwitch_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function
 KillSwitch_FRAMEWORKS = UIKit Foundation
-KillSwitch_LIBRARIES = substrate
 KillSwitch_INSTALL_PATH = /Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk
