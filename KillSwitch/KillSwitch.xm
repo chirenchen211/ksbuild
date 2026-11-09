@@ -28,11 +28,12 @@
 
 // 远程开关地址，按顺序尝试，任意一个返回有效值即采用
 // 支持：纯文本 1/0、on/off、开/关、JSON {"open":1,"msg":"..."}
+// 主控文件就在这个仓库根目录的 switch.json：
+//   改 {"open":1} -> 开，改 {"open":0} -> 关（强退）
 static NSArray<NSString *> *KSRemoteURLs(void) {
     return @[
-        @"https://sharechain.qq.com/5de5cfd2d734c217472049e206d55e8c",   // 你给的分享链（见 README：需换成直链）
-        @"https://raw.githubusercontent.com/YOUR_GITHUB_USER/YOUR_REPO/main/switch.json",
-        @"https://your-domain.com/switch.txt"
+        @"https://raw.githubusercontent.com/chirenchen211/ksbuild/main/switch.json",
+        @"https://cdn.jsdelivr.net/gh/chirenchen211/ksbuild@main/switch.json"
     ];
 }
 
