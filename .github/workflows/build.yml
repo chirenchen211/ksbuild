@@ -1,0 +1,50 @@
+name: build
+
+# ??:?? Actions -> build -> Run workflow;push ?????
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    # macOS 13 ? runner ????,??? macos-latest
+    runs-on: macos-latest
+    steps:
+      - name: ????
+        uses: actions/checkout@v4
+
+      - name: ?? Theos ? iOS SDK
+        run: |
+          set -e
+          brew install ldid xz dpkg || true
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git $THEOS
+          mkdir -p $THEOS/sdks
+          curl -L -o /tmp/sdks.tar.gz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
+          tar -xzf /tmp/sdks.tar.gz -C /tmp
+          cp -R /tmp/sdks-master/*.sdk $THEOS/sdks/ || true
+          ls $THEOS/sdks | head
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: ?? KillSwitch.dylib
+        run: |
+          set -e
+          cd KillSwitch
+          make clean || true
+          make -j4
+          find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
+
+      - name: ????
+        run: |
+          mkdir -p dist
+          find KillSwitch/.theos/obj -name "KillSwitch.dylib" -exec cp {} dist/ \;
+          ls -l dist
+
+      - name: ????
+        uses: actions/upload-artifact@v4
+        with:
+          name: KillSwitch-dylib
+          path: dist/KillSwitch.dylib
+          if-no-files-found: error
