@@ -1,6 +1,6 @@
 name: build
 
-# 触发：网页 Actions -> build -> Run workflow；push 也会自动跑
+# 触发：push / 网页手动 Run workflow
 on:
   workflow_dispatch:
   push:
@@ -8,7 +8,6 @@ on:
 
 jobs:
   build:
-    # macOS 13 的 runner 已经停用，必须用 macos-latest
     runs-on: macos-latest
     steps:
       - name: 拉取代码
@@ -33,14 +32,28 @@ jobs:
           set -e
           cd KillSwitch
           make clean || true
-          make -j4
+          make -j4 DEBUG=0 FINALPACKAGE=1
+          echo "--- all built dylibs ---"
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
-      - name: 收集产物
+      - name: 收集产物（排除 dSYM）
         run: |
+          set -e
           mkdir -p dist
-          find KillSwitch/.theos/obj -name "KillSwitch.dylib" -exec cp {} dist/ \;
+          f=$(find KillSwitch/.theos/obj -name "KillSwitch.dylib" -not -path "*.dSYM/*" | head -n 1)
+          echo "picked: $f"
+          cp "$f" dist/KillSwitch.dylib
           ls -l dist
+          file dist/KillSwitch.dylib
+          python3 - <<'PY'
+          import struct
+          d = open("dist/KillSwitch.dylib","rb").read(32)
+          magic, cpu, sub, ftype = struct.unpack("<IIII", d[:16])
+          print("magic=%08x cputype=%08x filetype=%d" % (magic, cpu, ftype))
+          assert magic == 0xFEEDFACF, "not 64-bit mach-o"
+          assert ftype == 6, "not MH_DYLIB (filetype=%d)" % ftype
+          print("macho check ok")
+          PY
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
