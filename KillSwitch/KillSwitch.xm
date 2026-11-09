@@ -32,8 +32,12 @@
 //   改 {"open":1} -> 开，改 {"open":0} -> 关（强退）
 static NSArray<NSString *> *KSRemoteURLs(void) {
     return @[
-        @"https://raw.githubusercontent.com/chirenchen211/ksbuild/main/switch.json",
-        @"https://cdn.jsdelivr.net/gh/chirenchen211/ksbuild@main/switch.json"
+        // 主：GitHub API，国内可直连、无 CDN 缓存，改完立刻生效（每小时 60 次限额，够用）
+        @"https://api.github.com/repos/chirenchen211/ksbuild/contents/switch.json",
+        // 备 1：jsDelivr（有缓存，改完可能要等几分钟，可去 purge.jsdelivr.net 手动刷新）
+        @"https://cdn.jsdelivr.net/gh/chirenchen211/ksbuild@main/switch.json",
+        // 备 2：raw（有梯子/海外网络时才通）
+        @"https://raw.githubusercontent.com/chirenchen211/ksbuild/main/switch.json"
     ];
 }
 
@@ -41,7 +45,7 @@ static NSArray<NSString *> *KSRemoteURLs(void) {
 #define KS_SECRET            @"CHANGE_ME_2024"
 
 // 轮询间隔（秒）
-#define KS_CHECK_INTERVAL    60.0
+#define KS_CHECK_INTERVAL    90.0
 // 看门狗间隔（秒）：状态为「关」时确保进程必死
 #define KS_WATCHDOG_INTERVAL 5.0
 // 连续失败多少次后按「关」处理（0 = 永远按上次缓存处理，不因断网误杀）
@@ -224,6 +228,22 @@ static BOOL KSParseResponse(NSData *data, NSString *sign, BOOL *outOn, NSString 
     id obj = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     if ([obj isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)obj;
+
+        // 3.1) GitHub Contents API：{"content":"<base64>","encoding":"base64"} —— 国内可直连，且不吃 CDN 缓存
+        id content = dict[@"content"];
+        id encoding = dict[@"encoding"];
+        if ([content isKindOfClass:[NSString class]] && [encoding isKindOfClass:[NSString class]] &&
+            [(NSString *)encoding isEqualToString:@"base64"]) {
+            NSString *b64 = [(NSString *)content stringByReplacingOccurrencesOfString:@"\n" withString:@""];
+            b64 = [b64 stringByReplacingOccurrencesOfString:@"\r" withString:@""];
+            NSData *inner = [[NSData alloc] initWithBase64EncodedString:b64
+                                                               options:NSDataBase64DecodingIgnoreUnknownCharacters];
+            if (inner.length) {
+                NSLog(@"[KillSwitch] 走 GitHub API 包装，解出 %lu 字节", (unsigned long)inner.length);
+                return KSParseResponse(inner, nil, outOn, outMsg);
+            }
+        }
+
         id val = dict[@"open"] ?: dict[@"status"] ?: dict[@"switch"] ?: dict[@"enable"] ?: dict[@"state"];
         NSString *msg = nil;
         id m = dict[@"msg"] ?: dict[@"message"] ?: dict[@"tip"];
