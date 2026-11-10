@@ -83,7 +83,7 @@ jobs:
           make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET_CODESIGN=/bin/true || true
           OBJ=$(find .theos/obj -name '*.o' | head -n1)
           echo "obj: $OBJ"
-          SDKDIR=$(ls -d $HOME/theos/sdks/iPhoneOS*.sdk | head -n1)
+          SDKDIR=$(ls -d $HOME/theos/sdks/iPhoneOS*.sdk | sort -V | tail -n1)
           echo "sdk: $SDKDIR"
           mkdir -p ../dist
           # 自己调 clang + ld64.lld 链接，绕开 Theos 的链接规则
