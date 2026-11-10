@@ -49,8 +49,11 @@ jobs:
           mkdir -p $THEOS/toolchain/linux/iphone/bin
           ln -sf "$(command -v clang)"   $THEOS/toolchain/linux/iphone/bin/clang
           ln -sf "$(command -v clang++)" $THEOS/toolchain/linux/iphone/bin/clang++
-          if [ -n "${LD:-}" ]; then ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld; fi
-          if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/bin/ldid; fi
+          if [ -n "${LD:-}" ]; then
+            ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld
+            ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld.lld
+            ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld64.lld
+          fi
           ls -l $THEOS/toolchain/linux/iphone/bin
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
@@ -70,9 +73,8 @@ jobs:
           set -e
           cd KillSwitch
           make clean || true
-          LD=$(ls /usr/bin/ld64.lld* 2>/dev/null | head -n1)
-          echo "using LD=$LD"
-          make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET_CODESIGN=/bin/true "TARGET_LD=$LD"
+          make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET_CODESIGN=/bin/true \
+               ADDITIONAL_LDFLAGS="-B$HOME/theos/toolchain/linux/iphone/bin"
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
       - name: collect
