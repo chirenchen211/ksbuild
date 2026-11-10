@@ -92,7 +92,8 @@ jobs:
                 -fuse-ld=/usr/bin/ld64.lld-20 \
                 -isysroot "$SDKDIR" \
                 -install_name /Library/MobileSubstrate/DynamicLibraries/KillSwitch.dylib \
-                -framework Foundation -framework UIKit \
+                -framework Foundation -framework UIKit -lobjc \
+                -Wl,-undefined,dynamic_lookup \
                 -Wl,-platform_version -Wl,ios -Wl,12.0 -Wl,16.5 \
                 -o ../dist/KillSwitch.dylib "$OBJ"
           ls -l ../dist || true
