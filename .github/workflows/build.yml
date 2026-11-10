@@ -47,14 +47,20 @@ jobs:
           tar -xzf /tmp/sdks.tar.gz -C /tmp
           cp -R /tmp/sdks-master/*.sdk $THEOS/sdks/ || true
           mkdir -p $THEOS/toolchain/linux/iphone/bin
+          mkdir -p $HOME/ldshim
           ln -sf "$(command -v clang)"   $THEOS/toolchain/linux/iphone/bin/clang
           ln -sf "$(command -v clang++)" $THEOS/toolchain/linux/iphone/bin/clang++
           if [ -n "${LD:-}" ]; then
             ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld
             ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld.lld
             ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld64.lld
+            # clang 用 -fuse-ld=lld 时找的是 PATH 里的 ld.lld，这里把它顶到最前面
+            ln -sf "$LD" $HOME/ldshim/ld
+            ln -sf "$LD" $HOME/ldshim/ld.lld
+            ln -sf "$LD" $HOME/ldshim/ld64.lld
           fi
-          ls -l $THEOS/toolchain/linux/iphone/bin
+          ls -l $THEOS/toolchain/linux/iphone/bin $HOME/ldshim
+          echo "$HOME/ldshim" >> $GITHUB_PATH
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
