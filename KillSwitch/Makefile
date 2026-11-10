@@ -10,6 +10,11 @@ KillSwitch_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function
 KillSwitch_FRAMEWORKS = UIKit Foundation
 KillSwitch_INSTALL_PATH = /Library/MobileSubstrate/DynamicLibraries
 
+# Linux 上让 clang 找到 Mach-O 链接器（ld64.lld），macOS 上不影响
+ifeq ($(shell uname -s),Linux)
+KillSwitch_LDFLAGS = -B$(THEOS)/toolchain/linux/iphone/bin
+endif
+
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 after-install::
