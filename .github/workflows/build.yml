@@ -70,12 +70,9 @@ jobs:
           set -e
           cd KillSwitch
           make clean || true
-          if command -v ldid >/dev/null; then
-            make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64
-          else
-            # 没有 ldid 就不签名（签名交给全能签打包时重签）
-            make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET_CODESIGN=/bin/true
-          fi
+          LD=$(ls /usr/bin/ld64.lld* 2>/dev/null | head -n1)
+          echo "using LD=$LD"
+          make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET_CODESIGN=/bin/true "TARGET_LD=$LD"
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
       - name: collect
