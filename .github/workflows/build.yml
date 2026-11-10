@@ -35,7 +35,11 @@ jobs:
         run: |
           set -e
           sudo apt-get update -qq
-          sudo apt-get install -y -qq make git curl xz-utils clang lld libssl-dev ldid || true
+          sudo apt-get install -y -qq make git curl xz-utils clang lld libssl-dev ldid libplist-utils || true
+          echo "clang: $(command -v clang || true)"
+          echo "ldid : $(command -v ldid || true)"
+          LD=$(ls /usr/bin/ld64.lld* /usr/lib/llvm-*/bin/ld64.lld 2>/dev/null | head -n1 || true)
+          echo "LD64 : ${LD:-none}"
           export THEOS=$HOME/theos
           git clone --recursive --depth 1 https://github.com/theos/theos.git $THEOS
           mkdir -p $THEOS/sdks
@@ -45,8 +49,9 @@ jobs:
           mkdir -p $THEOS/toolchain/linux/iphone
           ln -sf "$(command -v clang)"   $THEOS/toolchain/linux/iphone/clang
           ln -sf "$(command -v clang++)" $THEOS/toolchain/linux/iphone/clang++
-          ln -sf "$(command -v ld64.lld)" $THEOS/toolchain/linux/iphone/ld
+          if [ -n "${LD:-}" ]; then ln -sf "$LD" $THEOS/toolchain/linux/iphone/ld; fi
           if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/ldid; fi
+          if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/ldid2; fi
           ls -l $THEOS/toolchain/linux/iphone
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
