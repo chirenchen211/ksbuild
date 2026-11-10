@@ -46,13 +46,12 @@ jobs:
           curl -L -o /tmp/sdks.tar.gz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
           tar -xzf /tmp/sdks.tar.gz -C /tmp
           cp -R /tmp/sdks-master/*.sdk $THEOS/sdks/ || true
-          mkdir -p $THEOS/toolchain/linux/iphone
-          ln -sf "$(command -v clang)"   $THEOS/toolchain/linux/iphone/clang
-          ln -sf "$(command -v clang++)" $THEOS/toolchain/linux/iphone/clang++
-          if [ -n "${LD:-}" ]; then ln -sf "$LD" $THEOS/toolchain/linux/iphone/ld; fi
-          if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/ldid; fi
-          if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/ldid2; fi
-          ls -l $THEOS/toolchain/linux/iphone
+          mkdir -p $THEOS/toolchain/linux/iphone/bin
+          ln -sf "$(command -v clang)"   $THEOS/toolchain/linux/iphone/bin/clang
+          ln -sf "$(command -v clang++)" $THEOS/toolchain/linux/iphone/bin/clang++
+          if [ -n "${LD:-}" ]; then ln -sf "$LD" $THEOS/toolchain/linux/iphone/bin/ld; fi
+          if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/bin/ldid; fi
+          ls -l $THEOS/toolchain/linux/iphone/bin
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
@@ -71,7 +70,12 @@ jobs:
           set -e
           cd KillSwitch
           make clean || true
-          make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64
+          if command -v ldid >/dev/null; then
+            make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64
+          else
+            # 没有 ldid 就不签名（签名交给全能签打包时重签）
+            make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64 TARGET_CODESIGN=/bin/true
+          fi
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
       - name: collect
