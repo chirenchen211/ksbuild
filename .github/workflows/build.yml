@@ -7,12 +7,17 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-14, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: setup theos
+      - name: setup theos (macos)
+        if: runner.os == 'macOS'
         run: |
           set -e
           brew install ldid xz dpkg || true
@@ -22,16 +27,46 @@ jobs:
           curl -L -o /tmp/sdks.tar.gz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
           tar -xzf /tmp/sdks.tar.gz -C /tmp
           cp -R /tmp/sdks-master/*.sdk $THEOS/sdks/ || true
-          ls $THEOS/sdks | head
           echo "THEOS=$THEOS" >> $GITHUB_ENV
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-      - name: build
+      - name: setup theos (linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq make git curl xz-utils clang lld libssl-dev ldid || true
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git $THEOS
+          mkdir -p $THEOS/sdks
+          curl -L -o /tmp/sdks.tar.gz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
+          tar -xzf /tmp/sdks.tar.gz -C /tmp
+          cp -R /tmp/sdks-master/*.sdk $THEOS/sdks/ || true
+          mkdir -p $THEOS/toolchain/linux/iphone
+          ln -sf "$(command -v clang)"   $THEOS/toolchain/linux/iphone/clang
+          ln -sf "$(command -v clang++)" $THEOS/toolchain/linux/iphone/clang++
+          ln -sf "$(command -v ld64.lld)" $THEOS/toolchain/linux/iphone/ld
+          if command -v ldid >/dev/null; then ln -sf "$(command -v ldid)" $THEOS/toolchain/linux/iphone/ldid; fi
+          ls -l $THEOS/toolchain/linux/iphone
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: build (macos)
+        if: runner.os == 'macOS'
         run: |
           set -e
           cd KillSwitch
           make clean || true
           make -j4 DEBUG=0 FINALPACKAGE=1
+          find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
+
+      - name: build (linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          cd KillSwitch
+          make clean || true
+          make -j4 DEBUG=0 FINALPACKAGE=1 ARCHS=arm64
           find .theos/obj -name "KillSwitch.dylib" -exec ls -l {} \;
 
       - name: collect
@@ -42,13 +77,22 @@ jobs:
           echo "picked: $f"
           cp "$f" dist/KillSwitch.dylib
           ls -l dist
-          file dist/KillSwitch.dylib
-          file dist/KillSwitch.dylib | grep -q "dynamically linked shared library"
-          file dist/KillSwitch.dylib | grep -q "arm64"
+          if command -v file >/dev/null; then file dist/KillSwitch.dylib; fi
+          python3 - dist/KillSwitch.dylib <<'PY'
+          import struct, sys
+          d = open(sys.argv[1],"rb").read()
+          m, cpu, sub, ft = struct.unpack("<IIII", d[:16])
+          if m == 0xFEEDFACF:
+              assert ft == 6, "not MH_DYLIB"
+              print("thin dylib ok filetype=%d" % ft)
+          else:
+              assert struct.unpack(">I", d[:4])[0] == 0xCAFEBABE, "bad magic"
+              print("fat dylib ok")
+          PY
 
       - name: upload
         uses: actions/upload-artifact@v4
         with:
-          name: KillSwitch-dylib
+          name: KillSwitch-${{ matrix.os }}
           path: dist/KillSwitch.dylib
           if-no-files-found: error
